@@ -1,5 +1,9 @@
+# requirements.txt
 streamlit
-ultralytics
+# Use a specific version of ultralytics (e.g., v8.2.35) 
+# to prevent new compatibility issues
+ultralytics==8.2.35
+# Use the headless version of OpenCV for cloud deployment
 opencv-python-headless
 Pillow
 numpy
