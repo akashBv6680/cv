@@ -1,97 +1,94 @@
-# app.py
-
 import streamlit as st
 from ultralytics import YOLO
 from PIL import Image
-import numpy as np
 import io
-import cv2
 
-# --- Model and Configuration ---
-# Use the YOLOv8 Nano model (.pt extension) for fast inference on Streamlit Cloud (no GPU)
-# This file must be available in your GitHub repository or downloaded during runtime.
-MODEL_PATH = "yolov8n.pt" 
+# --- Configuration ---
+# Ensure yolov8n.pt is in the same directory as app.py
+MODEL_PATH = 'yolov8n.pt'
+st.set_page_config(
+    page_title="YOLOv8 Image Detector",
+    layout="centered",
+    initial_sidebar_state="auto"
+)
 
-# Use a specific fine-tuned model path if you have one. 
-# Example: FINE_TUNED_MODEL_PATH = "runs/detect/train/weights/best.pt"
-
-# --- Main Functions ---
-
-@st.cache_resource 
-def load_model():
-    """Loads the YOLOv8 model using st.cache_resource for efficiency."""
-    # This function runs only once per deployment
+# --- Model Loading with Caching ---
+# @st.cache_resource ensures the model is loaded only once across the entire app lifetime,
+# which is crucial for performance and avoids the model loading error repeatedly.
+@st.cache_resource
+def load_yolo_model(path):
+    """Loads the YOLO model and handles potential load errors."""
     try:
-        model = YOLO(MODEL_PATH)
+        # The YOLO class from ultralytics handles the necessary PyTorch
+        # safe global serialization for the checkpoint file (yolov8n.pt).
+        model = YOLO(path)
         return model
     except Exception as e:
-        st.error(f"Error loading model from {MODEL_PATH}: {e}")
+        # Display a custom error if the model fails to load
+        st.error(f"Failed to load the model from {path}.")
+        st.error("This usually happens due to mismatched dependency versions (PyTorch/Ultralytics) or a missing model file.")
+        st.error(f"Detailed Error: {e}")
         return None
 
-def detect_objects(model, image, conf_threshold):
-    """Performs object detection and returns the annotated image."""
-    # The 'stream=True' is critical for plotting the results correctly in Streamlit/OpenCV
-    results = model.predict(
-        source=image, 
-        conf=conf_threshold, 
-        save=False, 
-        stream=True, 
-        device='cpu' # Streamlit Cloud usually runs on CPU
-    )
-    
-    # Process the results (we take the first result as input is a single image)
-    for r in results:
-        # Ultralytics results.plot() returns the annotated frame as a NumPy array (BGR format)
-        annotated_frame = r.plot() 
-        # Convert BGR (OpenCV default) to RGB for Streamlit/PIL display
-        annotated_frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-        return annotated_frame_rgb
-    
-    return np.array(image) # Return original if no detections occur
-
-
-# --- Streamlit App Layout ---
-
-st.title("Object Detection with YOLOv8 & Streamlit")
-st.write("Upload an image to detect objects using a pre-trained YOLOv8 model.")
-
 # Load the model
-yolo_model = load_model()
+model = load_yolo_model(MODEL_PATH)
 
-if yolo_model:
-    # Sidebar for Model Configuration
-    st.sidebar.header("Model Parameters")
-    confidence = st.sidebar.slider(
-        "Confidence Threshold", 
-        min_value=0.01, 
-        max_value=1.0, 
-        value=0.25
-    )
+# --- Application UI ---
+st.title("Object Detection with YOLOv8 (Streamlit)")
+st.caption("Upload an image to detect objects using the YOLOv8 Nano model.")
 
-    # File Uploader
+if model:
     uploaded_file = st.file_uploader(
-        "Upload an Image (.jpg, .jpeg, .png)", 
-        type=['jpg', 'jpeg', 'png']
+        "Choose an image...", 
+        type=['png', 'jpg', 'jpeg'],
+        help="Upload an image file (PNG, JPG, or JPEG) to run object detection."
     )
 
     if uploaded_file is not None:
-        # Read the uploaded file into a PIL Image
-        image_data = uploaded_file.read()
-        image = Image.open(io.BytesIO(image_data))
-        
-        # Display Original Image
-        st.subheader("Original Image")
-        st.image(image, caption='Image uploaded successfully.', use_column_width=True)
+        # 1. Read the image
+        try:
+            # Open the image using PIL
+            image = Image.open(uploaded_file)
+            st.image(image, caption='Original Image', use_column_width=True)
+            st.write("Running detection...")
+            
+            # 2. Run inference
+            # The 'source' parameter takes a PIL Image object directly
+            results = model.predict(
+                source=image, 
+                conf=0.25, # Confidence threshold
+                iou=0.7,   # IOU threshold for Non-Maximum Suppression
+                save=False
+            )
 
-        # Detection Button
-        if st.button("Run Object Detection"):
-            with st.spinner('Detecting objects... This may take a moment on CPU.'):
-                # Run the detection
-                detected_image_array = detect_objects(yolo_model, image, confidence)
+            # 3. Get the annotated image
+            # The .plot() method returns a NumPy array with bounding boxes and labels drawn.
+            annotated_image = results[0].plot()
+
+            # 4. Display the results
+            st.subheader("Detection Results")
+            st.image(annotated_image, caption='Detected Objects', use_column_width=True)
+
+            # Optional: Display detection summary
+            detected_classes = results[0].boxes.cls.tolist()
+            if detected_classes:
+                class_names = results[0].names
+                class_counts = {}
+                for cls_index in detected_classes:
+                    name = class_names[int(cls_index)]
+                    class_counts[name] = class_counts.get(name, 0) + 1
                 
-                # Display Detected Image
-                st.subheader("Detected Objects")
-                st.image(detected_image_array, caption='Detection Results', use_column_width=True)
-                
-                # Optional: Display detection summary
-                st.success("Detection Complete!")
+                st.markdown("---")
+                st.subheader("Summary of Detections")
+                for name, count in class_counts.items():
+                    st.write(f"- **{name.capitalize()}**: {count} instance(s)")
+            else:
+                st.info("No objects detected in the image with the current confidence threshold.")
+
+        except Exception as e:
+            st.error(f"An error occurred during detection: {e}")
+            st.error("Please ensure your uploaded file is a valid image.")
+
+# Optional placeholder for initial state
+else:
+    st.info("Waiting for model to load and initialization to complete. Please ensure all dependency files are correct.")
