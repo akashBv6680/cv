@@ -1,0 +1,4 @@
+# packages.txt
+# Essential for OpenCV dependency conflicts/missing libraries on Debian-based systems
+libgl1
+libglib2.0-0
